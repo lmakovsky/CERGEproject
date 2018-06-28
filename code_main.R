@@ -26,12 +26,12 @@ for (file in file_list){
   
   # if the merged dataset doesn't exist, create it
   if (!exists("dataset")){
-    dataset <- read.table(file, header=TRUE, sep="|", dec=",")
+    dataset <- read.table(file, header=TRUE, sep="|", dec=",", encoding = "latin")
   }
   
   # if the merged dataset does exist, append to it
   if (exists("dataset")){
-    temp_dataset <-read.table(file, header=TRUE, sep="|", dec=",")
+    temp_dataset <-read.table(file, header=TRUE, sep="|", dec=",", encoding = "latin")
     dataset<-rbind(dataset, temp_dataset)
     rm(temp_dataset)
   }
@@ -53,12 +53,12 @@ for (file in file_list){
   
   # if the merged dataset doesn't exist, create it
   if (!exists("DT")){
-    DT <- read.table(file, header=TRUE, sep="|", dec=",")
+    DT <- read.table(file, header=TRUE, sep="|", dec=",", encoding = "latin")
   }
   
   # if the merged dataset does exist, append to it
   if (exists("DT")){
-    temp_dataset <-read.table(file, header=TRUE, sep="|", dec=",")
+    temp_dataset <-read.table(file, header=TRUE, sep="|", dec=",", encoding = "latin")
     DT<-rbind(DT, temp_dataset)
     rm(temp_dataset)
   }
@@ -82,6 +82,10 @@ DT["minute"] <- as.numeric(DT$minute)
 
 DT["daytime_id"] <- 60*DT$hour + DT$minute
 
+#stores size
+SQM <-read.table("DATA/SQMu.txt", header=TRUE, sep=";", dec=",")
+
+
 #creating data sample
 set.seed(123)
 nrow(DT) %>% {sample(.,. * 0.01)} -> index
@@ -91,25 +95,96 @@ DT_train <- subset(DT_train, Total_Basket_Value > 0)
 summary(DT_train)
 hist(DT$daytime_id)
 
-DTt_hour <- DT_train %>% group_by(hour) %>% summarise(mean = mean(Total_Basket_Value), sd = sd(Total_Basket_Value))
-plot(DTt_hour$hour, DTt_hour$mean, type = "l", main="Average total basket value", xlab="Hour", ylab="Value [CZK]", col="blue")
-
-DTt_price_shop <-
-  DT_train %>%
+DTt_price_shop <- DT %>%
   group_by(Retailer_Store_Number) %>%
-  summarise(mean_value = mean(Total_Basket_Value, na.rm = T),
-            sd_value = sd(Total_Basket_Value),
-            mean_items = mean(Total_Item_Count),
-            mean_hour = mean(hour))
+  summarise(mean_value = mean(Total_Basket_Value, na.rm = TRUE),
+            sd_value = sd(Total_Basket_Value, na.rm=TRUE),
+            mean_items = mean(Total_Item_Count, na.rm=TRUE),
+            sd_items = sd(Total_Item_Count, na.rm=TRUE),
+            mean_hour = mean(hour, na.rm=TRUE),
+            count = n())
+
+DT_hour <- DT %>% group_by(hour) %>% 
+  summarise(mean_value = mean(Total_Basket_Value, na.rm=TRUE), 
+            sd_value = sd(Total_Basket_Value, na.rm=TRUE),
+            mean_items = mean(Total_Item_Count, na.rm=TRUE),
+            sd_items = sd (Total_Item_Count, na.rm=TRUE),
+            count = n())
+
+plot(DT_hour$hour, DT_hour$mean_value, 
+     type = "l", main="Average total basket value", 
+     xlab="Hour", ylab="Value [CZK]", col="blue")
+
+
+#does not work for some reason
+time_stores <- matrix(0, ncol = nrow(DTt_price_shop)+1, nrow = 24)
+time_stores <- as.data.frame(time_stores)
+time_stores[,1] <- c(0:23)
+hour_perf_sample <- matrix(0, ncol = 2, nrow = 24)
+hour_perf_sample <- as.data.frame(hour_perf_sample)
+colnames(hour_perf_sample)<- c("hour","count")
+hour_perf_sample$hour <- c(0:23)
+
+for(i in 1:nrow(DTt_price_shop)){
+  DT_temp <- subset(DT, Retailer_Store_Number=i)
+  hour_perf_temp <- DT_temp %>% group_by(hour) %>% summarise(count = n())
+  hour_perf_temp2 <- hour_perf_sample
+  hour_perf_temp <- merge(hour_perf_temp2,hour_perf_temp,by="hour", all=TRUE)
+  for(j in 1:nrow(hour_perf_temp)){
+    time_stores[j,(i+1)] <- hour_perf_temp[j,2]
+  }
+}
+
+
+
+DT_daytime <- DT %>% group_by(daytime_id) %>% 
+  summarise(mean_value = mean(Total_Basket_Value, na.rm=TRUE), 
+            sd_value = sd(Total_Basket_Value, na.rm=TRUE),
+            count = n(),
+            mean_items = mean(Total_Item_Count, na.rm=TRUE),
+            sd_items = sd(Total_Item_Count, na.rm=TRUE))
+
+DTt_price_shop <- DT %>%
+  group_by(Retailer_Store_Number) %>%
+  summarise(mean_value = mean(Total_Basket_Value, na.rm = TRUE),
+            sd_value = sd(Total_Basket_Value, na.rm=TRUE),
+            mean_items = mean(Total_Item_Count, na.rm=TRUE),
+            sd_items = sd(Total_Item_Count, na.rm=TRUE),
+            mean_hour = mean(hour, na.rm=TRUE),
+            count = n(na.rm=TRUE))
+
+DTt_segment_shop <- DT %>%
+  group_by(Retailer_Store_Number) %>%
+  summarise(mean_value2 = mean(Total_Basket_Value[Total_Item_Count<3], na.rm = TRUE),
+            mean_value5 = mean(Total_Basket_Value[Total_Item_Count<6 & Total_Item_Count>2], na.rm = TRUE),
+            mean_value6 = mean(Total_Basket_Value[Total_Item_Count>5], na.rm = TRUE),
+            return2 = sum(Total_Basket_Value[Total_Item_Count<3], na.rm = TRUE),
+            return5 = sum(Total_Basket_Value[Total_Item_Count<6 & Total_Item_Count>2], na.rm = TRUE),
+            return6 = sum(Total_Basket_Value[Total_Item_Count<6], na.rm = TRUE))
+
+DTt_segment_shop["count2"] <- DTt_segment_shop$return2/DTt_segment_shop$mean_value2
+DTt_segment_shop["count5"] <- DTt_segment_shop$return5/DTt_segment_shop$mean_value5
+DTt_segment_shop["count6"] <- DTt_segment_shop$return6/DTt_segment_shop$mean_value6
+DTt_segment_shop["count"] <- DTt_segment_shop$count2 + DTt_segment_shop$count5 + DTt_segment_shop$count6
+
 
 #location_labels
-LOC <- read.csv(file="DATA/stores.csv", sep=";", dec=".")
+LOC <- read.csv(file="DATA/stores.csv", sep=";", dec=".", encoding = "latin")
 LOC["loc"] <- paste(LOC$mesto, LOC$ulice, sep = "_")
 colnames(LOC)[colnames(LOC)=="store_id"] <- "Retailer_Store_Number"
 DTt_price_shop <- merge(DTt_price_shop, LOC, by="Retailer_Store_Number")
 
+#merge with stores size
+colnames(SQM)[colnames(SQM)=="store_id"] <- "Retailer_Store_Number"
+DTt_price_shop <- merge(DTt_price_shop, SQM, by="Retailer_Store_Number")
+
+#revenue per meter
+DTt_price_shop["revenue"] <- DTt_price_shop$mean_value*DTt_price_shop$count
+DTt_price_shop["rev_month_meter"] <- DTt_price_shop$revenue/(12*DTt_price_shop$SQM)
 
 DTt_price_shop <- DTt_price_shop[order(DTt_price_shop[,2],decreasing=TRUE),]
+
+plot(DTt_price_shop$SQM, DTt_price_shop$rev_month_meter, main="Monthly revenue per square meter", xlab="Store area [m2]", ylab="Monthly revenue [Kč/m2]")
 
 DTt_price_shop <- arrange(DTt_price_shop, desc(mean_items))
 barplot(height = DTt_price_shop$mean_items, width = 1, space = 1.5,
@@ -152,12 +227,14 @@ DTt_price_shop["items_class"]
 
 #value/items plot
 par(mfrow=c(1,1))
-plot(DTt_price_shop$mean_value, DTt_price_shop$mean_items, main="Items vs. price", xlab="Average basket value", ylab="Average number of items")
+plot(DTt_price_shop$mean_value, DTt_price_shop$mean_items, 
+     main="Items vs. price", xlab="Average basket value", ylab="Average number of items")
 
 
 #distance to highway regression
 DIST <- read.csv(file="DATA_CREATED/highway_distance.csv",
                  sep=",", dec=".", encoding = "latin")
+
 DIST["HubDist"] <- DIST$HubDist/1000
 DIST["logHubDist"] <- log(DIST$HubDist)
 summary(lm(DIST$R_mean_ite ~ DIST$HubDist + DIST$R_mean_val))
@@ -171,6 +248,8 @@ shops_spec <- DTt_price_shop
 shops_spec["Retailer_Store_Number"] <- NULL
 shops_spec["mean_hour"] <- NULL
 shops_spec["sd_value"] <- NULL
+
+shops_spec <- scale(shops_spec, center = TRUE, scale = TRUE)
 d_shops <- dist(shops_spec) # method="man" # is a bit better
 hc_shops <- hclust(d_shops, method = "complete")
 shops_id <- rev(levels(DTt_price_shop[,13]))
@@ -184,7 +263,7 @@ dend <- rotate(dend, 1:134)
 dend <- color_branches(dend, k=5) #, groupLabels=iris_species)
 
 # We shall add the flower type to the labels:
-labels(dend) <- paste(as.character(DTt_price_shop[,13])[order.dendrogram(dend)],
+labels(dend) <- paste(as.character(DTt_price_shop[,15])[order.dendrogram(dend)],
                       "(",labels(dend),")", 
                       sep = "")
 # We hang the dendrogram a bit:
@@ -208,7 +287,7 @@ labels_colors(dend) <-
 
 
 #write CSV file
-write.table(DTt_price_shop, file = "DATA_GENERATED/DTt_price_shop.csv",row.names=FALSE, na="",col.names=TRUE, sep=",")
+write.table(DTt_price_shop, file = "DATA_CREATED/DTt_price_shop.csv",row.names=FALSE, na="",col.names=TRUE, sep=",")
 
 
 
@@ -221,12 +300,12 @@ for (file in file_list){
   
   # if the merged dataset doesn't exist, create it
   if (!exists("ITM")){
-    ITM <- read.table(file, header=TRUE, sep="|", dec=",")
+    ITM <- read.table(file, header=TRUE, sep="|", dec=",", encoding = "latin")
   }
   
   # if the merged dataset does exist, append to it
   if (exists("ITM")){
-    temp_dataset <-read.table(file, header=TRUE, sep="|", dec=",")
+    temp_dataset <-read.table(file, header=TRUE, sep="|", dec=",", encoding = "latin")
     ITM<-rbind(ITM, temp_dataset)
     rm(temp_dataset)
   }
@@ -263,12 +342,16 @@ summary(ITMt)
 hist(DT$daytime_id)
 
 #group by items
-ITMt_items <- ITMt %>% group_by(Retailer_Product_ID) %>% summarise(sum_itm = sum(Retailer_Product_ID))
+ITMt_items <- ITMt %>% group_by(Retailer_Product_ID) %>% 
+  summarise(sum_itm = sum(Retailer_Product_ID, na.rm=TRUE))
+
 ITMt_items["sum_itm"] <- ITMt_items$sum_itm/ITMt_items$Retailer_Product_ID
 ITMt_items <- merge(ITMt_items, dataset, by="Retailer_Product_ID")
 
 #group by items types
-ITMt_types <- ITMt %>% group_by(type) %>% summarise(sum_type = n())
+ITMt_types <- ITMt %>% group_by(type) %>% 
+  summarise(sum_type = n())
+
 arrange(ITMt_types, desc(sum_type))
 
 
