@@ -15,7 +15,9 @@ library(e1071)
 library(tibble)
 library(dendextend)
 library(colorspace)
-
+library(circlize)
+library(stringr)
+library(stringi)
 
 ##Uploading list of product types
 (list.files("DATA/") %>%
@@ -38,11 +40,13 @@ for (file in file_list){
   
 }
 
+#creating goods categories
 summary(dataset$Retailer_Product_Description)
 dataset <- unique(dataset)
 dataset["type"] <- paste(dataset$category, dataset$subcategory_group, dataset$family_group, sep = "_")
 
 
+rm(DT)
 
 ##Uploading shopping baskets
 (list.files("DATA/") %>%
@@ -85,6 +89,12 @@ DT["daytime_id"] <- 60*DT$hour + DT$minute
 #stores size
 SQM <-read.table("DATA/SQMu.txt", header=TRUE, sep=";", dec=",")
 
+#location_labels
+LOC <- read.csv(file="DATA/stores.csv", sep=";", dec=".", encoding = "latin")
+LOC["loc"] <- paste(LOC$mesto, LOC$ulice, sep = "_")
+colnames(LOC)[colnames(LOC)=="store_id"] <- "Retailer_Store_Number"
+DTt_price_shop <- merge(DTt_price_shop, LOC, by="Retailer_Store_Number")
+
 
 #creating data sample
 set.seed(123)
@@ -95,6 +105,7 @@ DT_train <- subset(DT_train, Total_Basket_Value > 0)
 summary(DT_train)
 hist(DT$daytime_id)
 
+#simple basket statistics on store level
 DTt_price_shop <- DT %>%
   group_by(Retailer_Store_Number) %>%
   summarise(mean_value = mean(Total_Basket_Value, na.rm = TRUE),
@@ -104,6 +115,7 @@ DTt_price_shop <- DT %>%
             mean_hour = mean(hour, na.rm=TRUE),
             count = n())
 
+#statistics - shopping time
 DT_hour <- DT %>% group_by(hour) %>% 
   summarise(mean_value = mean(Total_Basket_Value, na.rm=TRUE), 
             sd_value = sd(Total_Basket_Value, na.rm=TRUE),
@@ -111,32 +123,13 @@ DT_hour <- DT %>% group_by(hour) %>%
             sd_items = sd (Total_Item_Count, na.rm=TRUE),
             count = n())
 
+#average basket value by hour
 plot(DT_hour$hour, DT_hour$mean_value, 
      type = "l", main="Average total basket value", 
      xlab="Hour", ylab="Value [CZK]", col="blue")
 
 
-#does not work for some reason
-time_stores <- matrix(0, ncol = nrow(DTt_price_shop)+1, nrow = 24)
-time_stores <- as.data.frame(time_stores)
-time_stores[,1] <- c(0:23)
-hour_perf_sample <- matrix(0, ncol = 2, nrow = 24)
-hour_perf_sample <- as.data.frame(hour_perf_sample)
-colnames(hour_perf_sample)<- c("hour","count")
-hour_perf_sample$hour <- c(0:23)
-
-for(i in 1:nrow(DTt_price_shop)){
-  DT_temp <- subset(DT, Retailer_Store_Number=i)
-  hour_perf_temp <- DT_temp %>% group_by(hour) %>% summarise(count = n())
-  hour_perf_temp2 <- hour_perf_sample
-  hour_perf_temp <- merge(hour_perf_temp2,hour_perf_temp,by="hour", all=TRUE)
-  for(j in 1:nrow(hour_perf_temp)){
-    time_stores[j,(i+1)] <- hour_perf_temp[j,2]
-  }
-}
-
-
-
+#time-pattern in minutes sections
 DT_daytime <- DT %>% group_by(daytime_id) %>% 
   summarise(mean_value = mean(Total_Basket_Value, na.rm=TRUE), 
             sd_value = sd(Total_Basket_Value, na.rm=TRUE),
@@ -144,35 +137,6 @@ DT_daytime <- DT %>% group_by(daytime_id) %>%
             mean_items = mean(Total_Item_Count, na.rm=TRUE),
             sd_items = sd(Total_Item_Count, na.rm=TRUE))
 
-DTt_price_shop <- DT %>%
-  group_by(Retailer_Store_Number) %>%
-  summarise(mean_value = mean(Total_Basket_Value, na.rm = TRUE),
-            sd_value = sd(Total_Basket_Value, na.rm=TRUE),
-            mean_items = mean(Total_Item_Count, na.rm=TRUE),
-            sd_items = sd(Total_Item_Count, na.rm=TRUE),
-            mean_hour = mean(hour, na.rm=TRUE),
-            count = n(na.rm=TRUE))
-
-DTt_segment_shop <- DT %>%
-  group_by(Retailer_Store_Number) %>%
-  summarise(mean_value2 = mean(Total_Basket_Value[Total_Item_Count<3], na.rm = TRUE),
-            mean_value5 = mean(Total_Basket_Value[Total_Item_Count<6 & Total_Item_Count>2], na.rm = TRUE),
-            mean_value6 = mean(Total_Basket_Value[Total_Item_Count>5], na.rm = TRUE),
-            return2 = sum(Total_Basket_Value[Total_Item_Count<3], na.rm = TRUE),
-            return5 = sum(Total_Basket_Value[Total_Item_Count<6 & Total_Item_Count>2], na.rm = TRUE),
-            return6 = sum(Total_Basket_Value[Total_Item_Count<6], na.rm = TRUE))
-
-DTt_segment_shop["count2"] <- DTt_segment_shop$return2/DTt_segment_shop$mean_value2
-DTt_segment_shop["count5"] <- DTt_segment_shop$return5/DTt_segment_shop$mean_value5
-DTt_segment_shop["count6"] <- DTt_segment_shop$return6/DTt_segment_shop$mean_value6
-DTt_segment_shop["count"] <- DTt_segment_shop$count2 + DTt_segment_shop$count5 + DTt_segment_shop$count6
-
-
-#location_labels
-LOC <- read.csv(file="DATA/stores.csv", sep=";", dec=".", encoding = "latin")
-LOC["loc"] <- paste(LOC$mesto, LOC$ulice, sep = "_")
-colnames(LOC)[colnames(LOC)=="store_id"] <- "Retailer_Store_Number"
-DTt_price_shop <- merge(DTt_price_shop, LOC, by="Retailer_Store_Number")
 
 #merge with stores size
 colnames(SQM)[colnames(SQM)=="store_id"] <- "Retailer_Store_Number"
@@ -184,8 +148,131 @@ DTt_price_shop["rev_month_meter"] <- DTt_price_shop$revenue/(12*DTt_price_shop$S
 
 DTt_price_shop <- DTt_price_shop[order(DTt_price_shop[,2],decreasing=TRUE),]
 
-plot(DTt_price_shop$SQM, DTt_price_shop$rev_month_meter, main="Monthly revenue per square meter", xlab="Store area [m2]", ylab="Monthly revenue [Kč/m2]")
+#stores segmantation based on basket structure
+DTt_segment_shop <- DT %>%
+  group_by(Retailer_Store_Number) %>%
+  summarise(mean_value2 = mean(Total_Basket_Value[Total_Item_Count<3], na.rm = TRUE),
+            mean_value5 = mean(Total_Basket_Value[Total_Item_Count<6 & Total_Item_Count>2], na.rm = TRUE),
+            mean_value6 = mean(Total_Basket_Value[Total_Item_Count>5], na.rm = TRUE),
+            return2 = sum(Total_Basket_Value[Total_Item_Count<3], na.rm = TRUE),
+            return5 = sum(Total_Basket_Value[Total_Item_Count<6 & Total_Item_Count>2], na.rm = TRUE),
+            return6 = sum(Total_Basket_Value[Total_Item_Count>5], na.rm = TRUE))
 
+DTt_segment_shop["count2"] <- DTt_segment_shop$return2/DTt_segment_shop$mean_value2
+DTt_segment_shop["count5"] <- DTt_segment_shop$return5/DTt_segment_shop$mean_value5
+DTt_segment_shop["count6"] <- DTt_segment_shop$return6/DTt_segment_shop$mean_value6
+DTt_segment_shop["count"] <- DTt_segment_shop$count2 + DTt_segment_shop$count5 + DTt_segment_shop$count6
+
+DTt_segment_shop["return"] <- DTt_segment_shop$return2 + DTt_segment_shop$return5 + DTt_segment_shop$return6
+
+DTt_segment_shop["count2_share"] <- DTt_segment_shop$count2/DTt_segment_shop$count 
+DTt_segment_shop["count5_share"] <- DTt_segment_shop$count5/DTt_segment_shop$count 
+DTt_segment_shop["count6_share"] <- DTt_segment_shop$count6/DTt_segment_shop$count 
+
+DTt_segment_shop["log_return"] <- log(DTt_segment_shop$return)
+DTt_segment_shop["log_count2"] <- log(DTt_segment_shop$count2)
+DTt_segment_shop["log_count5"] <- log(DTt_segment_shop$count5)
+DTt_segment_shop["log_count6"] <- log(DTt_segment_shop$count6)
+
+DTt_segment_shop["mean_item_price"] <- DTt_segment_shop$mean_value/DTt_segment_shop$mean_items
+
+DTt_price_shop["log_rev_month_meter"] <- log(DTt_price_shop$rev_month_meter)
+summary(DTt_segment_shop$mean_item_price)
+
+DTt_segment_shop <- merge(DTt_segment_shop, DTt_price_shop, by="Retailer_Store_Number")
+
+#revenue per meter plot
+plot(DTt_segment_shop$SQM, DTt_segment_shop$rev_month_meter, main="Monthly revenue per square meter", xlab="Store area [m2]", ylab="Monthly revenue [Kč/m2]")
+
+#revenue per plot, basket segmentation
+summary(DTt_segment_shop$count2_share)
+summary(DTt_segment_shop$count5_share)
+summary(DTt_segment_shop$count6_share)
+
+#revenue per square meter
+plot(DTt_segment_shop$SQM[DTt_segment_shop$count2_share<0.46], DTt_segment_shop$rev_month_meter[DTt_segment_shop$count2_share<0.46], 
+     main="Monthly revenue per square meter", xlab="Store area [m2]", ylab="Monthly revenue [Kč/m2]", col="lightgray", pch=16, 
+     xlim=range(min(DTt_segment_shop$SQM), max(DTt_segment_shop$SQM)), ylim=range(min(DTt_segment_shop$rev_month_meter), max(DTt_segment_shop$rev_month_meter)))
+points(DTt_segment_shop$SQM[DTt_segment_shop$count2_share<0.5&DTt_segment_shop$count2_share>=0.46], DTt_segment_shop$rev_month_meter[DTt_segment_shop$count2_share<0.5&DTt_segment_shop$count2_share>=0.46], 
+       col="cyan", pch=16)
+points(DTt_segment_shop$SQM[DTt_segment_shop$count2_share<0.52&DTt_segment_shop$count2_share>=0.5], DTt_segment_shop$rev_month_meter[DTt_segment_shop$count2_share<0.52&DTt_segment_shop$count2_share>=0.5], 
+       col="orange", pch=16)
+points(DTt_segment_shop$SQM[DTt_segment_shop$count2_share>=0.52], DTt_segment_shop$rev_month_meter[DTt_segment_shop$count2_share>=0.52], 
+       col="red", pch=16)
+
+#revenue total
+plot(DTt_segment_shop$SQM[DTt_segment_shop$count6_share<0.17], DTt_segment_shop$revenue[DTt_segment_shop$count6_share<0.17], 
+     main="Total revenue", xlab="Store area [m2]", ylab="Total revenue [Kč]", col="lightgray", pch=16)
+points(DTt_segment_shop$SQM[DTt_segment_shop$count6_share<0.2&DTt_segment_shop$count6_share>=0.17], DTt_segment_shop$revenue[DTt_segment_shop$count6_share<0.2&DTt_segment_shop$count6_share>=0.17], 
+       col="cyan", pch=16)
+points(DTt_segment_shop$SQM[DTt_segment_shop$count6_share<0.22&DTt_segment_shop$count6_share>=0.2], DTt_segment_shop$revenue[DTt_segment_shop$count6_share<0.22&DTt_segment_shop$count6_share>=0.2], 
+       col="orange", pch=16)
+points(DTt_segment_shop$SQM[DTt_segment_shop$count6_share>=0.22], DTt_segment_shop$revenue[DTt_segment_shop$count6_share>=0.22], 
+       col="red", pch=16)
+
+#clustering shops based on the types of their baskets
+shops_segs1 <- DTt_segment_shop[,c("count2_share","count5_share", "count6_share", "mean_value", "count.y", "SQM")]
+shops_segs1 <- scale(shops_segs1, center = TRUE, scale = TRUE)
+
+# Determine number of clusters
+wss <- (nrow(shops_segs1)-1)*sum(apply(shops_segs1,2,var))
+for (i in 2:15) wss[i] <- sum(kmeans(shops_segs1, 
+                                     centers=i)$withinss)
+plot(1:15, wss, type="b", xlab="Number of Clusters",
+     ylab="Within groups sum of squares")
+# K-Means Cluster Analysis
+fit <- kmeans(shops_segs1, 3) # 3 cluster solution
+# get cluster means 
+aggregate(shops_segs1,by=list(fit$cluster),FUN=mean)
+# append cluster assignment
+shops_segs1 <- data.frame(shops_segs1, fit$cluster)
+
+# K-Means Cluster Analysis
+fit <- kmeans(shops_segs1, 6) # 6 cluster solution
+# get cluster means 
+aggregate(shops_segs1,by=list(fit$cluster),FUN=mean)
+# append cluster assignment
+shops_segs1 <- data.frame(shops_segs1, fit$cluster)
+
+#assigning cluster solution to main dataset
+DTt_segment_shop["cluster3"] <- shops_segs1$fit.cluster
+DTt_segment_shop["cluster6"] <- shops_segs1$fit.cluster.1
+
+#3cluster descriptive statistics
+STc1 <- DTt_segment_shop %>%
+  group_by(cluster3) %>%
+  summarise(mean_count = mean(count.x, na.rm = TRUE),
+            mean_count2_share = mean(count2_share, na.rm = TRUE),
+            mean_count5_share = mean(count5_share, na.rm = TRUE),
+            mean_count6_share = mean(count6_share, na.rm = TRUE),
+            mean_revenue_month_meter = mean(rev_month_meter, na.rm = TRUE),
+            mean_sqm = mean(SQM, na.rm = TRUE),
+            mean_revenue = mean(revenue, na.rm = TRUE),
+            mean_value = mean(mean_value, na.rm = TRUE),
+            count = n())
+
+#6cluster descriptive statistics
+STc2 <- DTt_segment_shop %>%
+  group_by(cluster6) %>%
+  summarise(mean_count = mean(count.x, na.rm = TRUE),
+            mean_count2_share = mean(count2_share, na.rm = TRUE),
+            mean_count5_share = mean(count5_share, na.rm = TRUE),
+            mean_count6_share = mean(count6_share, na.rm = TRUE),
+            mean_revenue_month_meter = mean(rev_month_meter, na.rm = TRUE),
+            mean_sqm = mean(SQM, na.rm = TRUE), 
+            mean_revenue = mean(revenue, na.rm = TRUE),
+            mean_value = mean(mean_value, na.rm = TRUE),
+            count = n())
+
+#colors_for_clusters
+col.cl1 <- "#E64428"
+col.cl2 <- "#4DBBE8"
+col.cl3 <- "#1561AE"
+col.cl4 <- "#A6CB59"
+col.cl5 <- "#AA66A9"
+col.cl6 <- "#FFC226"
+
+#barplot of mean items in basket in stores
 DTt_price_shop <- arrange(DTt_price_shop, desc(mean_items))
 barplot(height = DTt_price_shop$mean_items, width = 1, space = 1.5,
         names.arg = as.factor(DTt_price_shop$Retailer_Store_Number), legend.text = NULL, beside = FALSE,
@@ -197,6 +284,7 @@ barplot(height = DTt_price_shop$mean_items, width = 1, space = 1.5,
         cex.axis = par("cex.axis"), cex.names = par("cex.axis"),
         inside = TRUE, plot = TRUE, axis.lty = 0, offset = 0,
         add = FALSE, args.legend = NULL)
+
 
 DTt_price_shop <- arrange(DTt_price_shop, desc(mean_value))
 barplot(height = DTt_price_shop$mean_value, width = 1, space = 1.5,
@@ -222,9 +310,6 @@ barplot(height = DTt_price_shop$mean_hour, width = 1, space = 1.5,
         inside = TRUE, plot = TRUE, axis.lty = 0, offset = 0,
         add = FALSE, args.legend = NULL)
 
-#items clasification
-DTt_price_shop["items_class"]
-
 #value/items plot
 par(mfrow=c(1,1))
 plot(DTt_price_shop$mean_value, DTt_price_shop$mean_items, 
@@ -240,30 +325,33 @@ DIST["logHubDist"] <- log(DIST$HubDist)
 summary(lm(DIST$R_mean_ite ~ DIST$HubDist + DIST$R_mean_val))
 summary(lm(DIST$R_mean_ite ~ DIST$logHubDist + DIST$R_mean_val))
 
+#basket shares on return regression (lin-lin)
+summary(lm(DTt_segment_shop$return ~ DTt_segment_shop$count2_share + DTt_segment_shop$count5_share))
 
+#basket shares on return regression (log-lin)
+summary(lm(DTt_segment_shop$log_return ~ DTt_segment_shop$count2_share + DTt_segment_shop$count5_share))
+#the highest magnitude comes from share of middle baskets (but it is in percentage points and these have lower share), seems it is wrong specification
 
+#basket shares on return regression (log-log)
+summary(lm(DTt_segment_shop$log_return ~ DTt_segment_shop$log_count2 + DTt_segment_shop$log_count5 + DTt_segment_shop$log_count6))
+#the highest magnitude comes from large baskets
+
+#basket shares on return per square meter regression (log-log)
+summary(lm(DTt_segment_shop$log_rev_month_meter ~ DTt_segment_shop$log_count2 + DTt_segment_shop$log_count5 + DTt_segment_shop$log_count6))
+#the highest magnitude comes from large baskets
 
 #dendogram
-shops_spec <- DTt_price_shop
-shops_spec["Retailer_Store_Number"] <- NULL
-shops_spec["mean_hour"] <- NULL
-shops_spec["sd_value"] <- NULL
-
-shops_spec <- scale(shops_spec, center = TRUE, scale = TRUE)
-d_shops <- dist(shops_spec) # method="man" # is a bit better
+d_shops <- dist(shops_segs1) # method="man" # is a bit better
 hc_shops <- hclust(d_shops, method = "complete")
-shops_id <- rev(levels(DTt_price_shop[,13]))
+shops_id <- rev(levels(DTt_segment_shop[,"mesto"]))
 
 
 dend <- as.dendrogram(hc_shops)
 # order it the closest we can to the order of the observations:
 dend <- rotate(dend, 1:134)
 
-# Color the branches based on the clusters:
-dend <- color_branches(dend, k=5) #, groupLabels=iris_species)
-
 # We shall add the flower type to the labels:
-labels(dend) <- paste(as.character(DTt_price_shop[,15])[order.dendrogram(dend)],
+labels(dend) <- paste(as.character(DTt_segment_shop[,"mesto"])[order.dendrogram(dend)],
                       "(",labels(dend),")", 
                       sep = "")
 # We hang the dendrogram a bit:
@@ -274,21 +362,13 @@ dend <- set(dend, "labels_cex", 0.5)
 # And plot:
 par(mar = c(3,3,3,7))
 plot(dend, 
-     main = "Clustered shops", 
+     main = "Clustered stores", 
      horiz =  TRUE,  nodePar = list(cex = .007))
-legend("topleft", legend = shops_id, fill = rainbow_hcl(3))
-
-###
-# Manually match the labels, as much as possible, to the real classification of the flowers:
-labels_colors(dend) <-
-  rainbow_hcl(3)[sort_levels_values(
-    as.numeric(DTt_price_shop[,1])[order.dendrogram(dend)]
-  )]
 
 
 #write CSV file
 write.table(DTt_price_shop, file = "DATA_CREATED/DTt_price_shop.csv",row.names=FALSE, na="",col.names=TRUE, sep=",")
-
+write.table(DTt_segment_shop, file = "DATA_CREATED/DTt_segment_shop.xls",row.names=FALSE, na="",col.names=TRUE, sep=",")
 
 
 ##Uploading item list
@@ -372,10 +452,633 @@ for(i in 1:nrow(DT_f1)){
 
 }
 
+#association analysis - matrix creation
+#copying all items data into new dataset
+AS <- ITM
+#selecting 2 association features - baskets and product types bought 
+AS %<>% 
+  select("Retailer_Basket_ID", "type")
+
+## create a product table
+prodTable <- AS %>%
+  group_by(type) %>%
+  summarise(count = n())
+prodTable["prodID"] <- c(1:nrow(prodTable))
+prodTable["count"] <- NULL
+
+## create a transaction table 
+transTable <- AS %>%
+  group_by(Retailer_Basket_ID) %>%
+  summarise(count = n())
+transTable["transID"] <- c(1:nrow(transTable))
+transTable["count"] <- NULL
+
+## bind to the original table
+AS <- AS %>% right_join(prodTable, by = "type")
+AS <- merge(x=AS, y=transTable, all.x=TRUE, by="Retailer_Basket_ID")
+
+class(AS$prodID)
+class(AS$transID)
+
+## create sparse matrix based on IDs
+
+AS <- sparseMatrix(j = AS$transID,
+                         i = AS$prodID)
+
+
+rownames(AS) <- prodTable$type
+colnames(AS) <- transTable$Retailer_Basket_ID
+
+model <- apriori(AS, parameter = list(support = 0.001, confidence = 0.1))
+
+model %>% inspect() %>% as.data.frame()
+
+rules <- cbind(labels = labels(model), model@quality)
+
+rules$lhs <- gsub("=>.*","", rules$labels)
+rules$rhs <- gsub(".*=>","", rules$labels)
+
+rules <- rules[,c("lhs","rhs","support","confidence","lift", "count")]
+
+View(rules)
+
+CIRC1 <- rules  %>% select("lhs", "rhs", "confidence")
+
+#remove {}
+CIRC1["lhs"] <- str_sub(CIRC1$lhs, 2, -3)
+CIRC1["rhs"] <- str_sub(CIRC1$rhs, 2, -2)
+CIRC1["rhs"] <- str_sub(CIRC1$rhs, 2, -1)
+
+
+#circlize
+#base_col = c("#00aeef", "#b21dac", "#8dc63f", "#ffb100", "#dc0015", "#000000", "#a6a6a6")
+circos.clear()
+chordDiagram(CIRC1,
+            grid.col = "grey",
+            grid.border = NULL,
+            directional = 1,
+            self.link = 2,
+            diffHeight = F,
+            preAllocateTracks = 1)
+            
+circos.trackPlotRegion(track.index = 1, panel.fun = function(x, y) {
+              xlim = get.cell.meta.data("xlim")
+              ylim = get.cell.meta.data("ylim")
+              sector.name = get.cell.meta.data("sector.index")
+              circos.text(mean(xlim), ylim[1] + .1, sector.name, facing = "clockwise", niceFacing = TRUE, adj = c(0, 0.5), cex=0.2)
+              })
+            
+circos.clear()
+
+#circos code rest
+#annotationTrack = c("name","grid"),
+#circos.axis(h = "top", labels.cex = 0.5, major.tick.percentage = 0.2, sector.index = sector.name, track.index = 2)
+
+#association within clusters
+ITM <- merge(x=ITM, y=stores_clust, all.x=TRUE, by="Retailer_Store_Number")
+
+#cluster baskets subset
+ITMcl1 <- subset(ITM, cluster6==1)
+ITMcl2 <- subset(ITM, cluster6==2)
+ITMcl3 <- subset(ITM, cluster6==3)
+ITMcl4 <- subset(ITM, cluster6==4)
+ITMcl5 <- subset(ITM, cluster6==5)
+ITMcl6 <- subset(ITM, cluster6==6)
+
+#association analysis - cluster 1
+#copying all items data into new dataset
+AS1 <- ITMcl1
+#selecting 2 association features - baskets and product types bought 
+AS1 %<>% 
+  select("Retailer_Basket_ID", "type")
+
+## create a product table
+prodTable1 <- AS1 %>%
+  group_by(type) %>%
+  summarise(count = n())
+prodTable1["prodID"] <- c(1:nrow(prodTable1))
+prodTable1["count"] <- NULL
+
+## create a transaction table 
+transTable1 <- AS1 %>%
+  group_by(Retailer_Basket_ID) %>%
+  summarise(count = n())
+transTable1["transID"] <- c(1:nrow(transTable1))
+transTable1["count"] <- NULL
+
+## bind to the original table
+AS1 <- AS1 %>% right_join(prodTable1, by = "type")
+AS1 <- merge(x=AS1, y=transTable1, all.x=TRUE, by="Retailer_Basket_ID")
+
+class(AS1$prodID)
+class(AS1$transID)
+
+## create sparse matrix based on IDs
+
+AS1 <- sparseMatrix(j = AS1$transID,
+                   i = AS1$prodID)
+
+
+rownames(AS1) <- prodTable1$type
+colnames(AS1) <- transTable1$Retailer_Basket_ID
+
+model1 <- apriori(AS1, parameter = list(support = 0.001, confidence = 0.1))
+
+model1 %>% inspect() %>% as.data.frame()
+
+rules1 <- cbind(labels = labels(model1), model1@quality)
+
+rules1$lhs <- gsub("=>.*","", rules1$labels)
+rules1$rhs <- gsub(".*=>","", rules1$labels)
+
+rules1 <- rules1[,c("lhs","rhs","support","confidence","lift", "count")]
+
+View(rules1)
+
+CIR1 <- rules1  %>% select("lhs", "rhs", "confidence")
+
+#remove {}
+CIR1["lhs"] <- str_sub(CIR1$lhs, 2, -3)
+CIR1["rhs"] <- str_sub(CIR1$rhs, 2, -2)
+CIR1["rhs"] <- str_sub(CIR1$rhs, 2, -1)
+
+
+#circlize
+#base_col = c("#00aeef", "#b21dac", "#8dc63f", "#ffb100", "#dc0015", "#000000", "#a6a6a6")
+circos.clear()
+chordDiagram(CIR1,
+             grid.col = "grey",
+             grid.border = NULL,
+             directional = 1,
+             self.link = 2,
+             diffHeight = F,
+             preAllocateTracks = 1)
+
+circos.trackPlotRegion(track.index = 1, panel.fun = function(x, y) {
+  xlim = get.cell.meta.data("xlim")
+  ylim = get.cell.meta.data("ylim")
+  sector.name = get.cell.meta.data("sector.index")
+  circos.text(mean(xlim), ylim[1] + .1, sector.name, facing = "clockwise", niceFacing = TRUE, adj = c(0, 0.5), cex=0.2)
+})
+
+circos.clear()
+
+
+#association analysis - cluster 2
+#copying all items data into new dataset
+AS2 <- ITMcl2
+#selecting 2 association features - baskets and product types bought 
+AS2 %<>% 
+  select("Retailer_Basket_ID", "type")
+
+## create a product table
+prodTable2 <- AS2 %>%
+  group_by(type) %>%
+  summarise(count = n())
+prodTable2["prodID"] <- c(1:nrow(prodTable2))
+prodTable2["count"] <- NULL
+
+## create a transaction table 
+transTable2 <- AS2 %>%
+  group_by(Retailer_Basket_ID) %>%
+  summarise(count = n())
+transTable2["transID"] <- c(1:nrow(transTable2))
+transTable2["count"] <- NULL
+
+## bind to the original table
+AS2 <- AS2 %>% right_join(prodTable2, by = "type")
+AS2 <- merge(x=AS2, y=transTable2, all.x=TRUE, by="Retailer_Basket_ID")
+
+class(AS2$prodID)
+class(AS2$transID)
+
+## create sparse matrix based on IDs
+
+AS2 <- sparseMatrix(j = AS2$transID,
+                    i = AS2$prodID)
+
+
+rownames(AS2) <- prodTable2$type
+colnames(AS2) <- transTable2$Retailer_Basket_ID
+
+model2 <- apriori(AS2, parameter = list(support = 0.001, confidence = 0.1))
+
+model2 %>% inspect() %>% as.data.frame()
+
+rules2 <- cbind(labels = labels(model2), model2@quality)
+
+rules2$lhs <- gsub("=>.*","", rules2$labels)
+rules2$rhs <- gsub(".*=>","", rules2$labels)
+
+rules2 <- rules2[,c("lhs","rhs","support","confidence","lift", "count")]
+
+View(rules2)
+
+CIR2 <- rules2  %>% select("lhs", "rhs", "confidence")
+
+#remove {}
+CIR2["lhs"] <- str_sub(CIR2$lhs, 2, -3)
+CIR2["rhs"] <- str_sub(CIR2$rhs, 2, -2)
+CIR2["rhs"] <- str_sub(CIR2$rhs, 2, -1)
+
+
+#circlize
+#base_col = c("#00aeef", "#b21dac", "#8dc63f", "#ffb100", "#dc0015", "#000000", "#a6a6a6")
+circos.clear()
+chordDiagram(CIR2,
+             grid.col = "grey",
+             grid.border = NULL,
+             directional = 1,
+             self.link = 2,
+             diffHeight = F,
+             preAllocateTracks = 1)
+
+circos.trackPlotRegion(track.index = 1, panel.fun = function(x, y) {
+  xlim = get.cell.meta.data("xlim")
+  ylim = get.cell.meta.data("ylim")
+  sector.name = get.cell.meta.data("sector.index")
+  circos.text(mean(xlim), ylim[1] + .1, sector.name, facing = "clockwise", niceFacing = TRUE, adj = c(0, 0.5), cex=0.2)
+})
+
+circos.clear()
+
+
+#association analysis - cluster 4
+#copying all items data into new dataset
+AS4 <- ITMcl4
+#selecting 2 association features - baskets and product types bought 
+AS4 %<>% 
+  select("Retailer_Basket_ID", "type")
+
+## create a product table
+prodTable4 <- AS4 %>%
+  group_by(type) %>%
+  summarise(count = n())
+prodTable4["prodID"] <- c(1:nrow(prodTable4))
+prodTable4["count"] <- NULL
+
+## create a transaction table 
+transTable4 <- AS4 %>%
+  group_by(Retailer_Basket_ID) %>%
+  summarise(count = n())
+transTable4["transID"] <- c(1:nrow(transTable4))
+transTable4["count"] <- NULL
+
+## bind to the original table
+AS4 <- AS4 %>% right_join(prodTable4, by = "type")
+AS4 <- merge(x=AS4, y=transTable4, all.x=TRUE, by="Retailer_Basket_ID")
+
+class(AS4$prodID)
+class(AS4$transID)
+
+## create sparse matrix based on IDs
+
+AS4 <- sparseMatrix(j = AS4$transID,
+                    i = AS4$prodID)
+
+
+rownames(AS4) <- prodTable4$type
+colnames(AS4) <- transTable4$Retailer_Basket_ID
+
+model4 <- apriori(AS4, parameter = list(support = 0.001, confidence = 0.1))
+
+model4 %>% inspect() %>% as.data.frame()
+
+rules4 <- cbind(labels = labels(model4), model4@quality)
+
+rules4$lhs <- gsub("=>.*","", rules4$labels)
+rules4$rhs <- gsub(".*=>","", rules4$labels)
+
+rules4 <- rules4[,c("lhs","rhs","support","confidence","lift", "count")]
+
+View(rules4)
+
+CIR4 <- rules4  %>% select("lhs", "rhs", "confidence")
+
+#remove {}
+CIR4["lhs"] <- str_sub(CIR4$lhs, 2, -3)
+CIR4["rhs"] <- str_sub(CIR4$rhs, 2, -2)
+CIR4["rhs"] <- str_sub(CIR4$rhs, 2, -1)
+
+
+#circlize
+#base_col = c("#00aeef", "#b21dac", "#8dc63f", "#ffb100", "#dc0015", "#000000", "#a6a6a6")
+circos.clear()
+chordDiagram(CIR4,
+             grid.col = "grey",
+             grid.border = NULL,
+             directional = 1,
+             self.link = 2,
+             diffHeight = F,
+             preAllocateTracks = 1)
+
+circos.trackPlotRegion(track.index = 1, panel.fun = function(x, y) {
+  xlim = get.cell.meta.data("xlim")
+  ylim = get.cell.meta.data("ylim")
+  sector.name = get.cell.meta.data("sector.index")
+  circos.text(mean(xlim), ylim[1] + .1, sector.name, facing = "clockwise", niceFacing = TRUE, adj = c(0, 0.5), cex=0.2)
+})
+
+circos.clear()
+
+
+#association analysis - cluster 5
+#copying all items data into new dataset
+AS5 <- ITMcl5
+#selecting 2 association features - baskets and product types bought 
+AS5 %<>% 
+  select("Retailer_Basket_ID", "type")
+
+## create a product table
+prodTable5 <- AS5 %>%
+  group_by(type) %>%
+  summarise(count = n())
+prodTable5["prodID"] <- c(1:nrow(prodTable5))
+prodTable5["count"] <- NULL
+
+## create a transaction table 
+transTable5 <- AS5 %>%
+  group_by(Retailer_Basket_ID) %>%
+  summarise(count = n())
+transTable5["transID"] <- c(1:nrow(transTable5))
+transTable5["count"] <- NULL
+
+## bind to the original table
+AS5 <- AS5 %>% right_join(prodTable5, by = "type")
+AS5 <- merge(x=AS5, y=transTable5, all.x=TRUE, by="Retailer_Basket_ID")
+
+class(AS5$prodID)
+class(AS5$transID)
+
+## create sparse matrix based on IDs
+
+AS5 <- sparseMatrix(j = AS5$transID,
+                    i = AS5$prodID)
+
+
+rownames(AS5) <- prodTable5$type
+colnames(AS5) <- transTable5$Retailer_Basket_ID
+
+model5 <- apriori(AS5, parameter = list(support = 0.001, confidence = 0.1))
+
+model5 %>% inspect() %>% as.data.frame()
+
+rules5 <- cbind(labels = labels(model5), model5@quality)
+
+rules5$lhs <- gsub("=>.*","", rules5$labels)
+rules5$rhs <- gsub(".*=>","", rules5$labels)
+
+rules5 <- rules5[,c("lhs","rhs","support","confidence","lift", "count")]
+
+View(rules5)
+
+CIR5 <- rules5  %>% select("lhs", "rhs", "confidence")
+
+#remove {}
+CIR5["lhs"] <- str_sub(CIR5$lhs, 2, -3)
+CIR5["rhs"] <- str_sub(CIR5$rhs, 2, -2)
+CIR5["rhs"] <- str_sub(CIR5$rhs, 2, -1)
+
+
+#circlize
+#base_col = c("#00aeef", "#b21dac", "#8dc63f", "#ffb100", "#dc0015", "#000000", "#a6a6a6")
+circos.clear()
+chordDiagram(CIR5,
+             grid.col = "grey",
+             grid.border = NULL,
+             directional = 1,
+             self.link = 2,
+             diffHeight = F,
+             preAllocateTracks = 1)
+
+circos.trackPlotRegion(track.index = 1, panel.fun = function(x, y) {
+  xlim = get.cell.meta.data("xlim")
+  ylim = get.cell.meta.data("ylim")
+  sector.name = get.cell.meta.data("sector.index")
+  circos.text(mean(xlim), ylim[1] + .1, sector.name, facing = "clockwise", niceFacing = TRUE, adj = c(0, 0.5), cex=0.2)
+})
+
+circos.clear()
+
+#cluster statistics
+stores_clust <- DTt_segment_shop %>% select("Retailer_Store_Number", "cluster6")
+DT <- merge(x=DT, y=stores_clust, all.x=TRUE, by="Retailer_Store_Number")
+
+#cluster baskets subset
+BSKcl1 <- subset(DT, cluster6==1)
+BSKcl2 <- subset(DT, cluster6==2)
+BSKcl3 <- subset(DT, cluster6==3)
+BSKcl4 <- subset(DT, cluster6==4)
+BSKcl5 <- subset(DT, cluster6==5)
+BSKcl6 <- subset(DT, cluster6==6)
+
+#shopping time in clusters
+#statistics - shopping time
+TIMEcl1 <- BSKcl1 %>% group_by(hour) %>% 
+  summarise(mean_value = mean(Total_Basket_Value, na.rm=TRUE), 
+            mean_items = mean(Total_Item_Count, na.rm=TRUE),
+            count = n())
+TIMEcl1["nstores"] <- STc2[1,"count"]
+TIMEcl1["count.p.store"] <- TIMEcl1$count/TIMEcl1$nstores
+
+TIMEcl2 <- BSKcl2 %>% group_by(hour) %>% 
+  summarise(mean_value = mean(Total_Basket_Value, na.rm=TRUE), 
+            mean_items = mean(Total_Item_Count, na.rm=TRUE),
+            count = n())
+TIMEcl2["nstores"] <- STc2[2,"count"]
+TIMEcl2["count.p.store"] <- TIMEcl2$count/TIMEcl2$nstores
+
+TIMEcl3 <- BSKcl3 %>% group_by(hour) %>% 
+  summarise(mean_value = mean(Total_Basket_Value, na.rm=TRUE), 
+            mean_items = mean(Total_Item_Count, na.rm=TRUE),
+            count = n())
+TIMEcl3["nstores"] <- STc2[3,"count"]
+TIMEcl3["count.p.store"] <- TIMEcl3$count/TIMEcl3$nstores
+
+TIMEcl4 <- BSKcl4 %>% group_by(hour) %>% 
+  summarise(mean_value = mean(Total_Basket_Value, na.rm=TRUE), 
+            mean_items = mean(Total_Item_Count, na.rm=TRUE),
+            count = n())
+TIMEcl4["nstores"] <- STc2[4,"count"]
+TIMEcl4["count.p.store"] <- TIMEcl4$count/TIMEcl4$nstores
+
+TIMEcl5 <- BSKcl5 %>% group_by(hour) %>% 
+  summarise(mean_value = mean(Total_Basket_Value, na.rm=TRUE), 
+            mean_items = mean(Total_Item_Count, na.rm=TRUE),
+            count = n())
+TIMEcl5["nstores"] <- STc2[5,"count"]
+TIMEcl5["count.p.store"] <- TIMEcl5$count/TIMEcl5$nstores
+
+TIMEcl6 <- BSKcl6 %>% group_by(hour) %>% 
+  summarise(mean_value = mean(Total_Basket_Value, na.rm=TRUE), 
+            mean_items = mean(Total_Item_Count, na.rm=TRUE),
+            count = n())
+TIMEcl6["nstores"] <- STc2[6,"count"]
+TIMEcl6["count.p.store"] <- TIMEcl6$count/TIMEcl6$nstores
+
+#histogram of basket values, cathegories creation
+BSKcl1["value_tens"] <- round(BSKcl1$Total_Basket_Value, digits = -1)
+BSKpcl1 <- BSKcl1 %>% group_by(value_tens) %>% 
+  summarise(count = n())
+BSKpcl1 <- subset(BSKpcl1, value_tens>0)
+BSKpcl1["count"] <- BSKpcl1$count/sum(BSKpcl1$count)
+
+BSKcl2["value_tens"] <- round(BSKcl2$Total_Basket_Value, digits = -1)
+BSKpcl2 <- BSKcl2 %>% group_by(value_tens) %>% 
+  summarise(count = n())
+BSKpcl2 <- subset(BSKpcl2, value_tens>0)
+BSKpcl2["count"] <- BSKpcl2$count/sum(BSKpcl2$count)
+
+BSKcl3["value_tens"] <- round(BSKcl3$Total_Basket_Value, digits = -1)
+BSKpcl3 <- BSKcl3 %>% group_by(value_tens) %>% 
+  summarise(count = n())
+BSKpcl3 <- subset(BSKpcl3, value_tens>0)
+BSKpcl3["count"] <- BSKpcl3$count/sum(BSKpcl3$count)
+
+BSKcl4["value_tens"] <- round(BSKcl4$Total_Basket_Value, digits = -1)
+BSKpcl4 <- BSKcl4 %>% group_by(value_tens) %>% 
+  summarise(count = n())
+BSKpcl4 <- subset(BSKpcl4, value_tens>0)
+BSKpcl4["count"] <- BSKpcl4$count/sum(BSKpcl4$count)
+
+BSKcl5["value_tens"] <- round(BSKcl5$Total_Basket_Value, digits = -1)
+BSKpcl5 <- BSKcl5 %>% group_by(value_tens) %>% 
+  summarise(count = n())
+BSKpcl5 <- subset(BSKpcl5, value_tens>0)
+BSKpcl5["count"] <- BSKpcl5$count/sum(BSKpcl5$count)
+
+BSKcl6["value_tens"] <- round(BSKcl6$Total_Basket_Value, digits = -1)
+BSKpcl6 <- BSKcl6 %>% group_by(value_tens) %>% 
+  summarise(count = n())
+BSKpcl6 <- subset(BSKpcl6, value_tens>0)
+BSKpcl6["count"] <- BSKpcl6$count/sum(BSKpcl6$count)
+
+#plot of histograms for stores
+plot(BSKpcl1$value_tens, BSKpcl1$count, type="l", col=col.cl1, xlim=range(0,500), ylim=range(0.005,0.07),
+     main="Basket value histogram", xlab="Basket value [Kč]", ylab="Share of baskets")
+points(BSKpcl1$value_tens, BSKpcl1$count, type="l", col=col.cl1, lw=3)
+points(BSKpcl2$value_tens, BSKpcl2$count, type="l", col=col.cl2, lw=3)
+points(BSKpcl3$value_tens, BSKpcl3$count, type="l", col=col.cl3, lw=3)
+points(BSKpcl4$value_tens, BSKpcl4$count, type="l", col=col.cl4, lw=3)
+points(BSKpcl5$value_tens, BSKpcl5$count, type="l", col=col.cl5, lw=3)
+points(BSKpcl6$value_tens, BSKpcl6$count, type="l", col=col.cl6, lw=3)
+
+#histogram of basket items
+BSKit1 <- BSKcl1 %>% group_by(Total_Unique_Count) %>% 
+  summarise(count = n())
+BSKit1["count"] <- BSKit1$count/sum(BSKit1$count)
+
+BSKit2 <- BSKcl2 %>% group_by(Total_Unique_Count) %>% 
+  summarise(count = n())
+BSKit2["count"] <- BSKit2$count/sum(BSKit2$count)
+
+BSKit3 <- BSKcl3 %>% group_by(Total_Unique_Count) %>% 
+  summarise(count = n())
+BSKit3["count"] <- BSKit3$count/sum(BSKit3$count)
+
+BSKit4 <- BSKcl4 %>% group_by(Total_Unique_Count) %>% 
+  summarise(count = n())
+BSKit4["count"] <- BSKit4$count/sum(BSKit4$count)
+
+BSKit5 <- BSKcl5 %>% group_by(Total_Unique_Count) %>% 
+  summarise(count = n())
+BSKit5["count"] <- BSKit5$count/sum(BSKit5$count)
+
+BSKit6 <- BSKcl6 %>% group_by(Total_Unique_Count) %>% 
+  summarise(count = n())
+BSKit6["count"] <- BSKit6$count/sum(BSKit6$count)
+
+#number of items in shopping basket histogram
+plot(BSKit1$Total_Unique_Count, BSKit1$count, type="l", col=col.cl1, xlim=range(1,10), ylim=range(0,0.35),
+     main="Basket size histogram", xlab="# unique items in basktet", ylab="Share of baskets")
+points(BSKit1$Total_Unique_Count, BSKit1$count, type="l", col=col.cl1, lw=3)
+points(BSKit2$Total_Unique_Count, BSKit2$count, type="l", col=col.cl2, lw=3)
+points(BSKit3$Total_Unique_Count, BSKit3$count, type="l", col=col.cl3, lw=3)
+points(BSKit4$Total_Unique_Count, BSKit4$count, type="l", col=col.cl4, lw=3)
+points(BSKit5$Total_Unique_Count, BSKit5$count, type="l", col=col.cl5, lw=3)
+points(BSKit6$Total_Unique_Count, BSKit6$count, type="l", col=col.cl6, lw=3)
+
+#numer of shoppers across time per store
+plot(TIMEcl1$hour, TIMEcl1$count.p.store, type="l", col=col.cl1, xlim=range(min(DT$hour),max(DT$hour)), ylim=range(0,20000),
+     main="Number of customers per hour", xlab="Hour", ylab="# of baskets")
+points(TIMEcl1$hour, TIMEcl1$count.p.store, type="l", col=col.cl1, lw=3)
+points(TIMEcl2$hour, TIMEcl2$count.p.store, type="l", col=col.cl2, lw=3)
+points(TIMEcl3$hour, TIMEcl3$count.p.store, type="l", col=col.cl3, lw=3)
+points(TIMEcl4$hour, TIMEcl4$count.p.store, type="l", col=col.cl4, lw=3)
+points(TIMEcl5$hour, TIMEcl5$count.p.store, type="l", col=col.cl5, lw=3)
+points(TIMEcl6$hour, TIMEcl6$count.p.store, type="l", col=col.cl6, lw=3)
+
+#basket value across time per store
+plot(TIMEcl1$hour, TIMEcl1$mean_value, type="l", col=col.cl1, xlim=range(min(DT$hour),max(DT$hour)), ylim=range(0,300),
+     main="Mean basket value per hour", xlab="Hour", ylab="Mean basket value")
+points(TIMEcl1$hour, TIMEcl1$mean_value, type="l", col=col.cl1, lw=3)
+points(TIMEcl2$hour, TIMEcl2$mean_value, type="l", col=col.cl2, lw=3)
+points(TIMEcl3$hour, TIMEcl3$mean_value, type="l", col=col.cl3, lw=3)
+points(TIMEcl4$hour, TIMEcl4$mean_value, type="l", col=col.cl4, lw=3)
+points(TIMEcl5$hour, TIMEcl5$mean_value, type="l", col=col.cl5, lw=3)
+points(TIMEcl6$hour, TIMEcl6$mean_value, type="l", col=col.cl6, lw=3)
+
+#basket size across time per store
+plot(TIMEcl1$hour, TIMEcl1$mean_items, type="l", col=col.cl1, xlim=range(min(DT$hour),max(DT$hour)), ylim=range(0,6),
+     main="Mean items in basket per hour", xlab="Hour", ylab="# of items in basket")
+points(TIMEcl1$hour, TIMEcl1$mean_items, type="l", col=col.cl1, lw=3)
+points(TIMEcl2$hour, TIMEcl2$mean_items, type="l", col=col.cl2, lw=3)
+points(TIMEcl3$hour, TIMEcl3$mean_items, type="l", col=col.cl3, lw=3)
+points(TIMEcl4$hour, TIMEcl4$mean_items, type="l", col=col.cl4, lw=3)
+points(TIMEcl5$hour, TIMEcl5$mean_items, type="l", col=col.cl5, lw=3)
+points(TIMEcl6$hour, TIMEcl6$mean_items, type="l", col=col.cl6, lw=3)
+
+#return to SQM among clusters
+#revenue per square meter
+plot(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==1], DTt_segment_shop$rev_month_meter[DTt_segment_shop$cluster6==1], 
+     main="Monthly revenue per square meter", xlab="Store area [m2]", ylab="Monthly revenue [Kč/m2]", col=col.cl1, pch=16, cex=(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==1]/300),
+     xlim=range(min(DTt_segment_shop$SQM), max(DTt_segment_shop$SQM)), ylim=range(min(DTt_segment_shop$rev_month_meter), max(DTt_segment_shop$rev_month_meter)))
+points(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==2], DTt_segment_shop$rev_month_meter[DTt_segment_shop$cluster6==2], 
+       col=col.cl2, pch=16, cex=(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==2]/300))
+points(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==3], DTt_segment_shop$rev_month_meter[DTt_segment_shop$cluster6==3], 
+       col=col.cl3, pch=16, cex=(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==3]/300))
+points(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==4], DTt_segment_shop$rev_month_meter[DTt_segment_shop$cluster6==4], 
+       col=col.cl4, pch=16, cex=(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==4]/300))
+points(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==5], DTt_segment_shop$rev_month_meter[DTt_segment_shop$cluster6==5], 
+       col=col.cl5, pch=16, cex=(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==5]/300))
+points(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==6], DTt_segment_shop$rev_month_meter[DTt_segment_shop$cluster6==6], 
+       col=col.cl6, pch=16, cex=(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==6]/300))
+
+#return to SQM based on the share of small basktes
+#revenue per square meter
+plot(DTt_segment_shop$count2_share[DTt_segment_shop$cluster6==1], DTt_segment_shop$rev_month_meter[DTt_segment_shop$cluster6==1], 
+     main="Monthly revenue per square meter", xlab="Share of baskets with 1 or 2 items", ylab="Monthly revenue [Kč/m2]", col=col.cl1, pch=16, cex=(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==1]/300),
+     xlim=range(min(DTt_segment_shop$count2_share), max(DTt_segment_shop$count2_share)), ylim=range(min(DTt_segment_shop$rev_month_meter), max(DTt_segment_shop$rev_month_meter)))
+points(DTt_segment_shop$count2_share[DTt_segment_shop$cluster6==2], DTt_segment_shop$rev_month_meter[DTt_segment_shop$cluster6==2], 
+       col=col.cl2, pch=16, cex=(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==2]/300))
+points(DTt_segment_shop$count2_share[DTt_segment_shop$cluster6==3], DTt_segment_shop$rev_month_meter[DTt_segment_shop$cluster6==3], 
+       col=col.cl3, pch=16, cex=(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==3]/300))
+points(DTt_segment_shop$count2_share[DTt_segment_shop$cluster6==4], DTt_segment_shop$rev_month_meter[DTt_segment_shop$cluster6==4], 
+       col=col.cl4, pch=16, cex=(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==4]/300))
+points(DTt_segment_shop$count2_share[DTt_segment_shop$cluster6==5], DTt_segment_shop$rev_month_meter[DTt_segment_shop$cluster6==5], 
+       col=col.cl5, pch=16, cex=(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==5]/300))
+points(DTt_segment_shop$count2_share[DTt_segment_shop$cluster6==6], DTt_segment_shop$rev_month_meter[DTt_segment_shop$cluster6==6], 
+       col=col.cl6, pch=16, cex=(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==6]/300))
+
+#return to SQM based on the mean price of item
+#revenue per square meter
+plot(DTt_segment_shop$mean_item_price[DTt_segment_shop$cluster6==1], DTt_segment_shop$rev_month_meter[DTt_segment_shop$cluster6==1], 
+     main="Monthly revenue per square meter", xlab="Average price of good in basket", ylab="Monthly revenue [Kč/m2]", col=col.cl1, pch=16, cex=(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==1]/300),
+     xlim=range(min(DTt_segment_shop$mean_item_price), max(DTt_segment_shop$mean_item_price)), ylim=range(min(DTt_segment_shop$rev_month_meter), max(DTt_segment_shop$rev_month_meter)))
+points(DTt_segment_shop$mean_item_price[DTt_segment_shop$cluster6==2], DTt_segment_shop$rev_month_meter[DTt_segment_shop$cluster6==2], 
+       col=col.cl2, pch=16, cex=(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==2]/300))
+points(DTt_segment_shop$mean_item_price[DTt_segment_shop$cluster6==3], DTt_segment_shop$rev_month_meter[DTt_segment_shop$cluster6==3], 
+       col=col.cl3, pch=16, cex=(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==3]/300))
+points(DTt_segment_shop$mean_item_price[DTt_segment_shop$cluster6==4], DTt_segment_shop$rev_month_meter[DTt_segment_shop$cluster6==4], 
+       col=col.cl4, pch=16, cex=(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==4]/300))
+points(DTt_segment_shop$mean_item_price[DTt_segment_shop$cluster6==5], DTt_segment_shop$rev_month_meter[DTt_segment_shop$cluster6==5], 
+       col=col.cl5, pch=16, cex=(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==5]/300))
+points(DTt_segment_shop$mean_item_price[DTt_segment_shop$cluster6==6], DTt_segment_shop$rev_month_meter[DTt_segment_shop$cluster6==6], 
+       col=col.cl6, pch=16, cex=(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==6]/300))
 
 
 
-
+### desperate parts of some codes
 hist(DT$Total_Basket_Value)
 summary(DT$Total_Basket_Value, rm.na=T)
 
@@ -398,8 +1101,6 @@ DT_susp2 <- subset(DT_cl, DT_cl$Tax < 0)
 DT_cl <- subset(DT_cl, DT_cl$Tax > 0)
 
 DT_cl["log_value"] <- log(DT_cl$Total_Basket_Value)
-
-
 
 summary(DT_cl$year)
 summary(DT_cl$month)
