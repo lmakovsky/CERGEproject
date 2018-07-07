@@ -24,6 +24,8 @@ library(stringi)
     grep("pro_ross",.) %>%
     list.files("DATA/", full.names = TRUE)[.] -> file_list)
 
+rm(dataset)
+
 for (file in file_list){
   
   # if the merged dataset doesn't exist, create it
@@ -376,6 +378,8 @@ write.table(DTt_segment_shop, file = "DATA_CREATED/DTt_segment_shop.xls",row.nam
     grep("purchase_ross",.) %>%
     list.files("DATA/", full.names = TRUE)[.] -> file_list)
 
+rm(ITM)
+
 for (file in file_list){
   
   # if the merged dataset doesn't exist, create it
@@ -393,12 +397,6 @@ for (file in file_list){
 }
 
 ITM <- merge(ITM, dataset, by="Retailer_Product_ID")
-
-#creating data sample
-set.seed(123)
-nrow(ITM) %>% {sample(.,. * 0.01)} -> index
-ITMt <- ITM[index,]
-ITMt <- subset(ITMt, Sold_Amount > 0)
 
 ITMt["year"] <- substr(ITMt$Transaction_Date_Time, 1, 4)
 ITMt["year"] <- as.numeric(ITMt$year)
@@ -422,35 +420,21 @@ summary(ITMt)
 hist(DT$daytime_id)
 
 #group by items
-ITMt_items <- ITMt %>% group_by(Retailer_Product_ID) %>% 
-  summarise(sum_itm = sum(Retailer_Product_ID, na.rm=TRUE))
+ITMt_items <- ITM %>% group_by(Retailer_Product_ID) %>% 
+  summarise(sum_itm = n())
 
-ITMt_items["sum_itm"] <- ITMt_items$sum_itm/ITMt_items$Retailer_Product_ID
 ITMt_items <- merge(ITMt_items, dataset, by="Retailer_Product_ID")
 
 #group by items types
-ITMt_types <- ITMt %>% group_by(type) %>% 
+ITMt_types <- ITM %>% group_by(type) %>% 
   summarise(sum_type = n())
 
 arrange(ITMt_types, desc(sum_type))
-
-
 
 #basket with negative values
 DT_f1 <- subset(DT, DT$Total_Basket_Value < 0)
 DT_check <- DT
 
-for(i in 1:nrow(DT_f1)){
-  if (!exists("DT_neg")){
-    DT_neg <- subset(DT_check, DT_f1$Total_Basket_Value==DT_check$Total_Basket_Value & DT_f1$Retailer_Store_Number==DT_check$Retailer_Store_Number & DT_f1$day==DT_check$day)
-  }
-  if (exists("DT_neg")){
-    temp_dataset <- subset(DT_check, DT_f1$Total_Basket_Value==DT_check$Total_Basket_Value & DT_f1$Retailer_Store_Number==DT_check$Retailer_Store_Number & DT_f1$day==DT_check$day)
-    DT_neg <-rbind(DT_neg, temp_dataset)
-    rm(temp_dataset)
-  }
-
-}
 
 #association analysis - matrix creation
 #copying all items data into new dataset
@@ -702,6 +686,83 @@ circos.trackPlotRegion(track.index = 1, panel.fun = function(x, y) {
 
 circos.clear()
 
+#association analysis - cluster 3
+#copying all items data into new dataset
+AS3 <- ITMcl3
+#selecting 2 association features - baskets and product types bought 
+AS3 %<>% 
+  select("Retailer_Basket_ID", "type")
+
+## create a product table
+prodTable3 <- AS3 %>%
+  group_by(type) %>%
+  summarise(count = n())
+prodTable3["prodID"] <- c(1:nrow(prodTable3))
+prodTable3["count"] <- NULL
+
+## create a transaction table 
+transTable3 <- AS3 %>%
+  group_by(Retailer_Basket_ID) %>%
+  summarise(count = n())
+transTable3["transID"] <- c(1:nrow(transTable3))
+transTable3["count"] <- NULL
+
+## bind to the original table
+AS3 <- AS3 %>% right_join(prodTable3, by = "type")
+AS3 <- merge(x=AS3, y=transTable3, all.x=TRUE, by="Retailer_Basket_ID")
+
+class(AS3$prodID)
+class(AS3$transID)
+
+## create sparse matrix based on IDs
+
+AS3 <- sparseMatrix(j = AS3$transID,
+                    i = AS3$prodID)
+
+
+rownames(AS3) <- prodTable3$type
+colnames(AS3) <- transTable3$Retailer_Basket_ID
+
+model3 <- apriori(AS3, parameter = list(support = 0.001, confidence = 0.1))
+
+model3 %>% inspect() %>% as.data.frame()
+
+rules3 <- cbind(labels = labels(model3), model3@quality)
+
+rules3$lhs <- gsub("=>.*","", rules3$labels)
+rules3$rhs <- gsub(".*=>","", rules3$labels)
+
+rules3 <- rules3[,c("lhs","rhs","support","confidence","lift", "count")]
+
+View(rules3)
+
+CIR3 <- rules3  %>% select("lhs", "rhs", "confidence")
+
+#remove {}
+CIR3["lhs"] <- str_sub(CIR3$lhs, 2, -3)
+CIR3["rhs"] <- str_sub(CIR3$rhs, 2, -2)
+CIR3["rhs"] <- str_sub(CIR3$rhs, 2, -1)
+
+
+#circlize
+#base_col = c("#00aeef", "#b21dac", "#8dc63f", "#ffb100", "#dc0015", "#000000", "#a6a6a6")
+circos.clear()
+chordDiagram(CIR3,
+             grid.col = "grey",
+             grid.border = NULL,
+             directional = 1,
+             self.link = 2,
+             diffHeight = F,
+             preAllocateTracks = 1)
+
+circos.trackPlotRegion(track.index = 1, panel.fun = function(x, y) {
+  xlim = get.cell.meta.data("xlim")
+  ylim = get.cell.meta.data("ylim")
+  sector.name = get.cell.meta.data("sector.index")
+  circos.text(mean(xlim), ylim[1] + .1, sector.name, facing = "clockwise", niceFacing = TRUE, adj = c(0, 0.5), cex=0.2)
+})
+
+circos.clear()
 
 #association analysis - cluster 4
 #copying all items data into new dataset
@@ -860,9 +921,151 @@ circos.trackPlotRegion(track.index = 1, panel.fun = function(x, y) {
 
 circos.clear()
 
+
+#association analysis - cluster 6
+#copying all items data into new dataset
+AS6 <- ITMcl6
+#selecting 2 association features - baskets and product types bought 
+AS6 %<>% 
+  select("Retailer_Basket_ID", "type")
+
+## create a product table
+prodTable6 <- AS6 %>%
+  group_by(type) %>%
+  summarise(count = n())
+prodTable6["prodID"] <- c(1:nrow(prodTable6))
+prodTable6["count"] <- NULL
+
+## create a transaction table 
+transTable6 <- AS6 %>%
+  group_by(Retailer_Basket_ID) %>%
+  summarise(count = n())
+transTable6["transID"] <- c(1:nrow(transTable6))
+transTable6["count"] <- NULL
+
+## bind to the original table
+AS6 <- AS6 %>% right_join(prodTable6, by = "type")
+AS6 <- merge(x=AS6, y=transTable6, all.x=TRUE, by="Retailer_Basket_ID")
+
+class(AS6$prodID)
+class(AS6$transID)
+
+## create sparse matrix based on IDs
+
+AS6 <- sparseMatrix(j = AS6$transID,
+                    i = AS6$prodID)
+
+
+rownames(AS6) <- prodTable6$type
+colnames(AS6) <- transTable6$Retailer_Basket_ID
+
+model6 <- apriori(AS6, parameter = list(support = 0.001, confidence = 0.1))
+
+model6 %>% inspect() %>% as.data.frame()
+
+rules6 <- cbind(labels = labels(model6), model6@quality)
+
+rules6$lhs <- gsub("=>.*","", rules6$labels)
+rules6$rhs <- gsub(".*=>","", rules6$labels)
+
+rules6 <- rules6[,c("lhs","rhs","support","confidence","lift", "count")]
+
+View(rules6)
+
+CIR6 <- rules6  %>% select("lhs", "rhs", "confidence")
+
+#remove {}
+CIR6["lhs"] <- str_sub(CIR6$lhs, 2, -3)
+CIR6["rhs"] <- str_sub(CIR6$rhs, 2, -2)
+CIR6["rhs"] <- str_sub(CIR6$rhs, 2, -1)
+
+
+#circlize
+#base_col = c("#00aeef", "#b21dac", "#8dc63f", "#ffb100", "#dc0015", "#000000", "#a6a6a6")
+circos.clear()
+chordDiagram(CIR6,
+             grid.col = "grey",
+             grid.border = NULL,
+             directional = 1,
+             self.link = 2,
+             diffHeight = F,
+             preAllocateTracks = 1)
+
+circos.trackPlotRegion(track.index = 1, panel.fun = function(x, y) {
+  xlim = get.cell.meta.data("xlim")
+  ylim = get.cell.meta.data("ylim")
+  sector.name = get.cell.meta.data("sector.index")
+  circos.text(mean(xlim), ylim[1] + .1, sector.name, facing = "clockwise", niceFacing = TRUE, adj = c(0, 0.5), cex=0.2)
+})
+
+circos.clear()
+
+#number of associations in each cluster
+nrow(CIR1)
+nrow(CIR2)
+nrow(CIR3)
+nrow(CIR4)
+nrow(CIR5)
+nrow(CIR6)
+
+#diferences between clusters, adjusting rules
+CIR1e <- CIR1
+CIR1e["rule"] <- paste(CIR1$lhs, CIR1$rhs, sep = "|")
+CIR1e$lhs <- NULL
+CIR1e$rhs <- NULL
+colnames(CIR1e)[colnames(CIR1e)=="confidence"] <- "confidence_1"
+
+CIR2e <- CIR2
+CIR2e["rule"] <- paste(CIR2$lhs, CIR2$rhs, sep = "|")
+CIR2e$lhs <- NULL
+CIR2e$rhs <- NULL
+colnames(CIR2e)[colnames(CIR2e)=="confidence"] <- "confidence_2"
+
+CIR3e <- CIR3
+CIR3e["rule"] <- paste(CIR3$lhs, CIR3$rhs, sep = "|")
+CIR3e$lhs <- NULL
+CIR3e$rhs <- NULL
+colnames(CIR3e)[colnames(CIR3e)=="confidence"] <- "confidence_3"
+
+CIR4e <- CIR4
+CIR4e["rule"] <- paste(CIR4$lhs, CIR4$rhs, sep = "|")
+CIR4e$lhs <- NULL
+CIR4e$rhs <- NULL
+colnames(CIR4e)[colnames(CIR4e)=="confidence"] <- "confidence_4"
+
+CIR5e <- CIR5
+CIR5e["rule"] <- paste(CIR5$lhs, CIR5$rhs, sep = "|")
+CIR5e$lhs <- NULL
+CIR5e$rhs <- NULL
+colnames(CIR5e)[colnames(CIR5e)=="confidence"] <- "confidence_5"
+
+CIR6e <- CIR6
+CIR6e["rule"] <- paste(CIR6$lhs, CIR6$rhs, sep = "|")
+CIR6e$lhs <- NULL
+CIR6e$rhs <- NULL
+colnames(CIR6e)[colnames(CIR6e)=="confidence"] <- "confidence_6"
+
+#cluster diferences, cluster results merge
+CIRe <- merge(x=CIR1e, y=CIR2e, all.x=TRUE, all.y=TRUE, by="rule")
+CIRe <- merge(x=CIRe, y=CIR3e, all.x=TRUE, all.y=TRUE, by="rule")
+CIRe <- merge(x=CIRe, y=CIR4e, all.x=TRUE, all.y=TRUE, by="rule")
+CIRe <- merge(x=CIRe, y=CIR5e, all.x=TRUE, all.y=TRUE, by="rule")
+CIRe <- merge(x=CIRe, y=CIR6e, all.x=TRUE, all.y=TRUE, by="rule")
+
+CIRe["avg"] <- (CIRe$confidence_1 + CIRe$confidence_2 + CIRe$confidence_3 + CIRe$confidence_4 + CIRe$confidence_5 + CIRe$confidence_6)/6
+CIRe["dev"] <- (abs(CIRe$confidence_1 - CIRe$avg) + abs(CIRe$confidence_2 - CIRe$avg) + abs(CIRe$confidence_3 - CIRe$avg) + abs(CIRe$confidence_4 - CIRe$avg) +  abs(CIRe$confidence_5 - CIRe$avg) + abs(CIRe$confidence_6 - CIRe$avg))/CIRe$avg
+
 #cluster statistics
 stores_clust <- DTt_segment_shop %>% select("Retailer_Store_Number", "cluster6")
 DT <- merge(x=DT, y=stores_clust, all.x=TRUE, by="Retailer_Store_Number")
+
+#cluster municipalities
+stores_clust <- read.csv(file="DATA_CREATED/stores_clust_municipalities.csv", sep=",", dec=".", encoding = "latin")
+stores_clust_sum <- stores_clust %>%
+  group_by(Dcluster6) %>%
+  summarise(count = n(),
+            mean_pop = median(POCET_OBYV))
+
 
 #cluster baskets subset
 BSKcl1 <- subset(DT, cluster6==1)
@@ -1113,6 +1316,20 @@ hist(DT_cl$hour, col = " grey", main = NULL)
 summary(DT)
 summary(DT_cl)
 
+#creating data sample
+set.seed(123)
+nrow(ITM) %>% {sample(.,. * 0.01)} -> index
+ITMt <- ITM[index,]
+ITMt <- subset(ITMt, Sold_Amount > 0)
 
-
-
+for(i in 1:nrow(DT_f1)){
+  if (!exists("DT_neg")){
+    DT_neg <- subset(DT_check, DT_f1$Total_Basket_Value==DT_check$Total_Basket_Value & DT_f1$Retailer_Store_Number==DT_check$Retailer_Store_Number & DT_f1$day==DT_check$day)
+  }
+  if (exists("DT_neg")){
+    temp_dataset <- subset(DT_check, DT_f1$Total_Basket_Value==DT_check$Total_Basket_Value & DT_f1$Retailer_Store_Number==DT_check$Retailer_Store_Number & DT_f1$day==DT_check$day)
+    DT_neg <-rbind(DT_neg, temp_dataset)
+    rm(temp_dataset)
+  }
+  
+}
