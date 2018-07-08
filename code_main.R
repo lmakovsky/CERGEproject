@@ -1055,6 +1055,18 @@ CIRe <- merge(x=CIRe, y=CIR6e, all.x=TRUE, all.y=TRUE, by="rule")
 CIRe["avg"] <- (CIRe$confidence_1 + CIRe$confidence_2 + CIRe$confidence_3 + CIRe$confidence_4 + CIRe$confidence_5 + CIRe$confidence_6)/6
 CIRe["dev"] <- (abs(CIRe$confidence_1 - CIRe$avg) + abs(CIRe$confidence_2 - CIRe$avg) + abs(CIRe$confidence_3 - CIRe$avg) + abs(CIRe$confidence_4 - CIRe$avg) +  abs(CIRe$confidence_5 - CIRe$avg) + abs(CIRe$confidence_6 - CIRe$avg))/CIRe$avg
 
+#plot diferences in associations
+CIRe <- CIRe[order(CIRe[,"dev"],decreasing=TRUE),]
+CIRsum <- subset(CIRe, dev>0.5)
+
+plot(as.factor(CIRsum$rule), CIRsum$confidence_1, las=3, cex=0.25, main="Association diferences among clusters", ylab="Association confidence", col=col.cl1, pch=16, ylim=range(0.1,0.4))
+points(as.factor(CIRsum$rule), CIRsum$confidence_1, col=col.cl1, pch=16)
+points(as.factor(CIRsum$rule), CIRsum$confidence_2, col=col.cl2, pch=16)
+points(as.factor(CIRsum$rule), CIRsum$confidence_3, col=col.cl3, pch=16)
+points(as.factor(CIRsum$rule), CIRsum$confidence_4, col=col.cl4, pch=16)
+points(as.factor(CIRsum$rule), CIRsum$confidence_5, col=col.cl5, pch=16)
+points(as.factor(CIRsum$rule), CIRsum$confidence_6, col=col.cl6, pch=16)
+
 #cluster statistics
 stores_clust <- DTt_segment_shop %>% select("Retailer_Store_Number", "cluster6")
 DT <- merge(x=DT, y=stores_clust, all.x=TRUE, by="Retailer_Store_Number")
@@ -1279,6 +1291,65 @@ points(DTt_segment_shop$mean_item_price[DTt_segment_shop$cluster6==5], DTt_segme
 points(DTt_segment_shop$mean_item_price[DTt_segment_shop$cluster6==6], DTt_segment_shop$rev_month_meter[DTt_segment_shop$cluster6==6], 
        col=col.cl6, pch=16, cex=(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==6]/300))
 
+#special events analysis
+events <- read.csv(file="DATA_CREATED/Events.csv", sep=",", dec=".", encoding="utf-8")
+
+events$group.temp <- gsub("(",":", events$V1, fixed = TRUE)
+events$fin <- gsub(".*:","",events$group.temp)
+events$fin <- gsub(")",":", events$fin, fixed = TRUE)
+events$fin <- gsub(":.*","",events$fin)
+
+events$group.temp <- NULL
+colnames(events)[colnames(events)=="fin"] <- "NAZ_OBEC"
+
+EV <- merge(x=events, y=stores_clust, by="NAZ_OBEC")
+EV$V2 <- as.character(EV$V2)
+EV$datetype <- nchar(EV$V2, type = "chars", allowNA = FALSE, keepNA = NA)
+
+for(i in 1:nrow(EV)){
+  if(EV[i,"datetype"] >=12 & EV[i,"datetype"]<=14){
+    EV[i,"date_start"] <- str_sub(EV[i,"V2"], 4, -2)
+    EV[i,"date_start"] <- gsub(" .*","",EV[i,"date_start"])
+    EV[i,"date_start"] <- gsub(".","/", EV[i,"date_start"], fixed = TRUE)
+    EV[i,"date_end"] <- EV[i,"date_start"]
+  }else if(EV[i,"datetype"] >=16 & EV[i,"datetype"]<=19){
+    EV[i,"date_start"] <- str_sub(EV[i,"V2"], 4, -1)
+    EV[i,"date_start"] <- gsub(" .*","",EV[i,"date_start"])
+    EV[i,"date_start"] <- gsub(".","/", EV[i,"date_start"], fixed = TRUE)
+    EV[i,"date_end"] <- EV[i,"date_start"]
+  }else if(EV[i,"datetype"] >=24 & EV[i,"datetype"]<=31){
+    EV[i,"date_start"] <- str_sub(EV[i,"V2"], 4, -1)
+    EV[i,"date_start"] <- gsub(" - .*","",EV[i,"date_start"])
+    EV[i,"date_start"] <- gsub(".","/", EV[i,"date_start"], fixed = TRUE)
+    EV[i,"date_end"] <- gsub(".* - ","",EV[i,"V2"])
+    EV[i,"date_end"] <- str_sub(EV[i,"date_end"], 4, -1)
+    EV[i,"date_end"] <- gsub(".","/", EV[i,"date_end"], fixed = TRUE)
+  }else if(EV[i,"datetype"] >=34 & EV[i,"datetype"]<=42){
+    EV[i,"date_start"] <- str_sub(EV[i,"V2"], 4, -1)
+    EV[i,"date_start"] <- gsub(" - .*","",EV[i,"date_start"])
+    EV[i,"date_start"] <- gsub(" .*","",EV[i,"date_start"])  
+    EV[i,"date_start"] <- gsub(".","/", EV[i,"date_start"], fixed = TRUE)
+    EV[i,"date_end"] <- gsub(".* - ","",EV[i,"V2"])
+    EV[i,"date_end"] <- str_sub(EV[i,"date_end"], 4, -1)
+    EV[i,"date_end"] <- gsub(" .*","",EV[i,"date_end"])     
+    EV[i,"date_end"] <- gsub(".","/", EV[i,"date_end"], fixed = TRUE)      
+  }else{
+    EV[i,"date_start"] <- 0
+    EV[i,"date_end"] <- 0  
+  } 
+}
+
+EV$date_start <- as.Date(EV$date_start, format='%d/%m/%Y')
+EV$date_end <- as.Date(EV$date_end, format='%d/%m/%Y')
+
+EV$time_duration <- EV$date_end - EV$date_start
+
+DT$date <- substr(DT$Transaction_Date_Time, 1, 8)
+DT$date <- as.Date(DT$date, format='%Y%m%d')
+
+
+
+
 
 
 ### desperate parts of some codes
@@ -1333,3 +1404,19 @@ for(i in 1:nrow(DT_f1)){
   }
   
 }
+
+###html srape
+events <- matrix(0, ncol = 2, nrow = 512)
+events <- as.data.frame(events)
+
+for(i in 1:512){
+  temp_1 <- "získání lokace"
+  events[i,1] <- temp_1
+  temp_2 <- "získání času"
+  events[i,2] <- temp_2
+}
+
+
+
+
+
