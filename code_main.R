@@ -1344,9 +1344,42 @@ EV$date_end <- as.Date(EV$date_end, format='%d/%m/%Y')
 
 EV$time_duration <- EV$date_end - EV$date_start
 
+EV <- subset(EV, time_duration >= 0 & time_duration < 7)
+
+EV$space_time <- paste(EV$store_id, EV$date_start, sep = "-")
+
 DT$date <- substr(DT$Transaction_Date_Time, 1, 8)
 DT$date <- as.Date(DT$date, format='%Y%m%d')
 
+DTdate <- DT %>% group_by(Retailer_Store_Number, date) %>% 
+  summarise(return = sum(Total_Basket_Value))
+
+DTdate$space_time <- paste(DTdate$Retailer_Store_Number, DTdate$date, sep = "-")
+
+DTdatelast <- DTdate
+
+DTdatelast$date <- DTdatelast$date + 7
+DTdatelast$space_time <- paste(DTdatelast$Retailer_Store_Number, DTdatelast$date, sep = "-")
+DTdatelast$Retailer_Store_Number <- NULL
+DTdatelast$date <- NULL
+colnames(DTdatelast)[colnames(DTdatelast)=="return"] <- "return_last"
+
+DTdate <- merge(x=DTdate, y=DTdatelast, by="space_time")
+
+DTdatenext <- DTdate
+
+DTdatenext$date <- DTdatenext$date - 7
+DTdatenext$space_time <- paste(DTdatenext$Retailer_Store_Number, DTdatenext$date, sep = "-")
+DTdatenext$Retailer_Store_Number <- NULL
+DTdatenext$date <- NULL
+DTdatenext$return_last <- NULL
+colnames(DTdatenext)[colnames(DTdatenext)=="return"] <- "return_next"
+
+DTdate <- merge(x=DTdate, y=DTdatenext, by="space_time")
+
+DTdate <- subset(DTdate, return>0 & return_last>0 & return_next>0)
+
+EVeval <- merge(EV, DTdate, by="space_time")
 
 
 
