@@ -18,6 +18,8 @@ library(colorspace)
 library(circlize)
 library(stringr)
 library(stringi)
+library(xml2)
+library(rvest)
 
 ##Uploading list of product types
 (list.files("DATA/") %>%
@@ -1131,7 +1133,7 @@ TIMEcl6 <- BSKcl6 %>% group_by(hour) %>%
 TIMEcl6["nstores"] <- STc2[6,"count"]
 TIMEcl6["count.p.store"] <- TIMEcl6$count/TIMEcl6$nstores
 
-#histogram of basket values, cathegories creation
+#histogram of basket values, categories creation
 BSKcl1["value_tens"] <- round(BSKcl1$Total_Basket_Value, digits = -1)
 BSKpcl1 <- BSKcl1 %>% group_by(value_tens) %>% 
   summarise(count = n())
@@ -1291,8 +1293,32 @@ points(DTt_segment_shop$mean_item_price[DTt_segment_shop$cluster6==5], DTt_segme
 points(DTt_segment_shop$mean_item_price[DTt_segment_shop$cluster6==6], DTt_segment_shop$rev_month_meter[DTt_segment_shop$cluster6==6], 
        col=col.cl6, pch=16, cex=(DTt_segment_shop$SQM[DTt_segment_shop$cluster6==6]/300))
 
+
+###html srape
+#Scrape the website for the movie rating
+raw <- read_html("http://www.jizni-morava.info/kalendar-akci/?AdOb_Back=MA%3D%3D.YmFja1VSTA%3D%3D%3AaHR0cHM6Ly9sLmZhY2Vib29rLmNvbS8%3D%2CYmFja01lc3NhZ2U%3D%3AW3c6dHJhbnNdWnDEm3RbL3c6dHJhbnNd&form%2FAdOb_Sent=1&form%2Fid_tema=&form%2Ftoblast_kod=&form%2Fnazev=&form%2Fid_druh%5B%5D=10&form%2Fid_druh%5B%5D=12&form%2Fid_druh%5B%5D=2&form%2Fid_druh%5B%5D=8&form%2Fmisto=&form%2Fdatum=7&form%2Fac_cas_od=1.1.2017&form%2Fac_cas_do=31.12.2017&form%2Fid_jazyk=0&form%2Fid_vyznam%5B%5D=1&form%2Fid_vyznam%5B%5D=5&form%2Fid_vyznam%5B%5D=4&form%2Fid_vyznam%5B%5D=3&form%2Fid_vyznam%5B%5D=2&form%2Fid_titulky=0&form%2Forder=timestamp&form%2Fsubmit=")
+
+rating <- raw %>% 
+  html_nodes("li")
+
+
+###html srape
+events <- matrix(0, ncol = 2, nrow = 512)
+events <- as.data.frame(events)
+
+for(i in 1:512){
+  temp_1 <- rating[[i]] %>% html_node("p") %>% html_text()
+  events[i,1] <- temp_1
+  temp_2 <- rating[[i]] %>% html_node("em") %>% html_text() 
+  events[i,2] <- temp_2
+}
+
+# Replacing () with | 
+events$group.temp <- gsub("(","|", events$V1, fixed = TRUE)
+events$group.temp <- gsub(")","|", events$group.temp, fixed = TRUE)
+
 #special events analysis
-events <- read.csv(file="DATA_CREATED/Events.csv", sep=",", dec=".", encoding="utf-8")
+#if scrape do not work# events <- read.csv(file="DATA_CREATED/Events.csv", sep=",", dec=".", encoding="utf-8")
 
 events$group.temp <- gsub("(",":", events$V1, fixed = TRUE)
 events$fin <- gsub(".*:","",events$group.temp)
@@ -1350,6 +1376,7 @@ EV$space_time <- paste(EV$store_id, EV$date_start, sep = "-")
 
 DT$date <- substr(DT$Transaction_Date_Time, 1, 8)
 DT$date <- as.Date(DT$date, format='%Y%m%d')
+DT$space_time <- paste(DT$Retailer_Store_Number, DT$date, sep = "-")
 
 DTdate <- DT %>% group_by(Retailer_Store_Number, date) %>% 
   summarise(return = sum(Total_Basket_Value))
@@ -1380,74 +1407,87 @@ DTdate <- merge(x=DTdate, y=DTdatenext, by="space_time")
 DTdate <- subset(DTdate, return>0 & return_last>0 & return_next>0)
 
 EVeval <- merge(EV, DTdate, by="space_time")
+EVeval["return_ave"] <- (EVeval$return_last + EVeval$return_next)/2
 
+EVeval$return_share <- 3*EVeval$return/(EVeval$return_last + EVeval$return_next + EVeval$return) 
+EVeval$return_last_share <- 3*EVeval$return_last/(EVeval$return_last + EVeval$return_next + EVeval$return) 
+EVeval$return_next_share <- 3*EVeval$return_next/(EVeval$return_last + EVeval$return_next + EVeval$return) 
+EVeval$return_ave_share <- (EVeval$return_last_share + EVeval$return_next_share)/2 
 
+summary(lm(EVeval$return ~ EVeval$return_ave - 1))
+summary(lm(EVeval$return_share ~ EVeval$return_ave_share - 1))
 
+#results in bar plot
+EVeval["index"] <- 1
+EVagg <- EVeval %>% group_by(index) %>% 
+  summarise(return_last_share = mean(return_last_share, na.rm=TRUE),
+            sd_return_last_share = sd(return_last_share, na.rm=TRUE),
+            return_share = mean(return_share, na.rm=TRUE),
+            sd_return_share = sd(return_share, na.rm=TRUE),
+            return_next_share = mean(return_next_share, na.rm=TRUE),
+            sd_return_next_share = sd(return_next_share, na.rm=TRUE))
 
+EVagg$sd_return_last_share <- sd(EVeval$return_last_share)
+EVagg$sd_return_share <- sd(EVeval$return_share)
+EVagg$sd_return_next_share <- sd(EVeval$return_next_share)
 
-### desperate parts of some codes
-hist(DT$Total_Basket_Value)
-summary(DT$Total_Basket_Value, rm.na=T)
+EVagg$index <- NULL
 
+EVplot <- matrix(0, ncol = 3, nrow = 3)
+EVplot <- as.data.frame(EVplot)
+colnames(EVplot)[colnames(EVplot)=="V1"] <- "name"
+colnames(EVplot)[colnames(EVplot)=="V2"] <- "mean"
+colnames(EVplot)[colnames(EVplot)=="V3"] <- "sd"
+EVplot$name <- c("return_last", "return", "return_next")
+EVplot$mean <- as.numeric(c(EVagg[1,1], EVagg[1,3], EVagg[1,5]))
+EVplot$sd <- as.numeric(c(EVagg[1,2], EVagg[1,4], EVagg[1,6]))
+rm(EVagg)
 
+#barplot
+par(mfrow = c(1, 1))
+plot <- barplot(height = EVplot$mean, names.arg = EVplot$name, ylim=range(0,1.4), main="Returns at stores before, during and after events")
+segments(plot, EVplot$mean -EVplot$sd * 2, plot,
+         EVplot$mean + EVplot$sd * 2, lwd = 1.5)
+arrows(plot, EVplot$mean - EVplot$sd * 2, plot,
+       EVplot$mean + EVplot$sd * 2, lwd = 1.5, angle = 90,
+       code = 3, length = 0.05)
 
-DT_cl <- subset(DT, DT$Total_Basket_Value > 0)
+#events with high influence
+EVshrt <- subset(EVeval, return_share > 1.1)
+EVshrt <- EVshrt[order(EVshrt[,"return_share"],decreasing=TRUE),]
+EVshrt$date_last <- EVshrt$date - 7
+EVshrt$date_next <- EVshrt$date + 7
 
-summary(DT_cl$Total_Basket_Value)
-hist(DT_f1$Total_Basket_Value, xlim = range(-1000,0), nclass = 100, col = "grey", main = NULL)
-hist(DT_cl$Retailer_Store_Number)
-hist(DT_cl$Total_Basket_Value, xlim = range(0,500), nclass = 1000, col = "grey", main = NULL)
-hist(DT_cl$log_value, xlim = range(0,10), nclass = 100, col = "grey", main = NULL)
-hist(DT_cl$log_value, xlim = range(0,10), nclass = 40, col = "grey", main = NULL)
-hist(DT_cl$Total_Unique_Count, xlim = range(0,20), nclass = 100, col = "grey", main = NULL)
-hist(DT_cl$Total_Item_Count, xlim = range(0,20), nclass = 700, col = "grey", main = NULL)
-hist(DT_cl$Total_Item_Count, xlim = range(0,10), nclass = 200, col = "grey", main = NULL)
-
-DT_susp <- subset(DT_cl, DT_cl$Total_Basket_Value < 1)
-DT_susp2 <- subset(DT_cl, DT_cl$Tax < 0)
-DT_cl <- subset(DT_cl, DT_cl$Tax > 0)
-
-DT_cl["log_value"] <- log(DT_cl$Total_Basket_Value)
-
-summary(DT_cl$year)
-summary(DT_cl$month)
-summary(DT_cl$day)
-summary(DT_cl$hour)
-
-hist(DT_cl$day, col = "grey", main = NULL)
-hist(DT_cl$hour, col = " grey", main = NULL)
-
-summary(DT)
-summary(DT_cl)
-
-#creating data sample
-set.seed(123)
-nrow(ITM) %>% {sample(.,. * 0.01)} -> index
-ITMt <- ITM[index,]
-ITMt <- subset(ITMt, Sold_Amount > 0)
-
-for(i in 1:nrow(DT_f1)){
-  if (!exists("DT_neg")){
-    DT_neg <- subset(DT_check, DT_f1$Total_Basket_Value==DT_check$Total_Basket_Value & DT_f1$Retailer_Store_Number==DT_check$Retailer_Store_Number & DT_f1$day==DT_check$day)
-  }
-  if (exists("DT_neg")){
-    temp_dataset <- subset(DT_check, DT_f1$Total_Basket_Value==DT_check$Total_Basket_Value & DT_f1$Retailer_Store_Number==DT_check$Retailer_Store_Number & DT_f1$day==DT_check$day)
-    DT_neg <-rbind(DT_neg, temp_dataset)
-    rm(temp_dataset)
-  }
-  
+EVshrt$time <- gsub(":.*","", EVshrt$V2)
+EVshrt$time <- as.character(EVshrt$time)
+for(i in 1:nrow(EVshrt)){
+if(nchar(EVshrt[i,"time"])>18){
+  EVshrt[i,"time"] <- 0
+}else{
+  EVshrt[i,"time"]<- substr(EVshrt[i,"time"], nchar[i,"time"]-2, nchar[i,"time"])
+}
 }
 
-###html srape
-events <- matrix(0, ncol = 2, nrow = 512)
-events <- as.data.frame(events)
-
-for(i in 1:512){
-  temp_1 <- "získání lokace"
-  events[i,1] <- temp_1
-  temp_2 <- "získání času"
-  events[i,2] <- temp_2
+par(mfrow = c(3, 3))
+for(i in 1:9){
+  DTplot <- DT %>% group_by(hour) %>% 
+    summarise(mean_value = mean(Total_Basket_Value[date==EVshrt[i,"date"]], na.rm=TRUE),
+              mean_last = mean(Total_Basket_Value[date==EVshrt[i,"date_last"]], na.rm=TRUE),
+              mean_next = mean(Total_Basket_Value[date==EVshrt[i,"date_next"]], na.rm=TRUE))
+  plot(DTplot$hour, DTplot$mean_value, 
+       type = "l", main="Average total basket value", 
+       xlab="Hour", ylab="Value [CZK]", col="blue")
+  points(DTplot$hour, DTplot$mean_value, 
+         type = "l", col="blue", lw=3)
+  points(DTplot$hour, DTplot$mean_last, 
+         type = "l", col="grey", lw=2)
+  points(DTplot$hour, DTplot$mean_next, 
+         type = "l", col="grey", lw=2)
 }
+
+
+
+
 
 
 
